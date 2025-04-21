@@ -1,11 +1,11 @@
-use anyhow::{Context, Error, anyhow};
+use anyhow::{Context, Error, anyhow, bail};
 use async_channel::{Receiver, Sender, unbounded};
 use axum::http::HeaderValue;
 use futures_util::StreamExt;
 use reqwest::Client;
 use reqwest::header::{HeaderMap, HeaderName};
 use reqwest_eventsource::{Event, EventSource};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::fmt::{Debug, Display, Formatter};
 use std::str::FromStr;
@@ -38,10 +38,13 @@ pub struct ChatCompletionRequest {
     pub messages: ChatMessages,
     pub chat_model: ChatModel,
 }
+#[derive(Debug, Deserialize, Serialize)]
 pub struct ChatMessages(pub Vec<ChatMessage>);
+#[derive(Debug, Deserialize, Serialize)]
 pub struct ChatMessage {
     pub role: String,
-    pub content: String,
+    pub content: Option<String>,
+    pub reasoning_content: Option<String>,
 }
 impl Display for ChatMessages {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -50,26 +53,52 @@ impl Display for ChatMessages {
             return Err(std::fmt::Error);
         }
         if arr.len() == 1 {
-            write!(f, "{}", arr[0].content)?;
+            write!(f, "{}", arr[0].content.as_ref().unwrap_or(&"".to_string()))?;
             return Ok(());
         }
         for item in arr {
-            write!(f, "#[{}]\n{}\n\n", item.role.trim(), item.content.trim())?;
+            write!(
+                f,
+                "#[{}]\n{}\n\n",
+                item.role.trim(),
+                item.content.as_ref().unwrap_or(&"".to_string()).trim()
+            )?;
         }
         Ok(())
     }
 }
+#[derive(Copy, Clone)]
 pub enum ChatModel {
     DeepSeekV3,
     DeepSeekR1,
 }
-impl Display for ChatModel {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let str = match self {
-            ChatModel::DeepSeekV3 => "deep_seek_v3".to_string(),
-            ChatModel::DeepSeekR1 => "deep_seek".to_string(),
-        };
-        write!(f, "{}", str)
+impl FromStr for ChatModel {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "deepseek-r1" => Ok(ChatModel::DeepSeekR1),
+            "deepseek-v3" => Ok(ChatModel::DeepSeekV3),
+            &_ => {
+                bail!("invalid model")
+            }
+        }
+    }
+}
+impl ChatModel {
+    pub fn to_yuanbao_string(&self) -> String {
+        match self {
+            ChatModel::DeepSeekV3 => "deep_seek_v3",
+            ChatModel::DeepSeekR1 => "deep_seek",
+        }
+        .to_string()
+    }
+    pub fn to_common_string(&self) -> String {
+        match self {
+            ChatModel::DeepSeekV3 => "deepseek-v3",
+            ChatModel::DeepSeekR1 => "deepseek-r1",
+        }
+        .to_string()
     }
 }
 
@@ -134,7 +163,7 @@ impl Yuanbao {
         "agentId": self.config.agent_id,
         "supportHint": 1,
         "version": "v2",
-        "chatModelId": request.chat_model.to_string(),
+        "chatModelId": request.chat_model.to_yuanbao_string(),
             }
         );
         let formatted_url = CHAT_URL.replace("{}", &conversation_id);
@@ -230,7 +259,9 @@ impl Yuanbao {
                 },
             }
         }
-        let _ = sender.send(ChatCompletionEvent::Finish(finish_reason)).await;
+        let _ = sender
+            .send(ChatCompletionEvent::Finish(finish_reason))
+            .await;
     }
     fn make_headers(config: &Config) -> HeaderMap {
         HeaderMap::from_iter(

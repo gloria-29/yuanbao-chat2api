@@ -1,15 +1,17 @@
+mod service;
 mod yuanbao;
-use crate::yuanbao::{
-    ChatCompletionRequest, ChatMessage, ChatMessages, ChatModel, Config, Yuanbao,
-};
+
+use crate::service::Handler;
+use axum::Router;
+use axum::routing::{get, post};
 use futures::stream::StreamExt;
-use tokio_util::sync::CancellationToken;
-use tracing::metadata::LevelFilter;
+use tokio::net::TcpListener;
 use tracing::instrument;
+use tracing::metadata::LevelFilter;
+use tracing_subscriber::Layer;
 use tracing_subscriber::filter::filter_fn;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
-use tracing_subscriber::Layer;
 
 #[instrument]
 #[tokio::main]
@@ -23,27 +25,10 @@ async fn main() {
                 })),
         )
         .init();
-    let config: Config = tokio::fs::read_to_string("config.yml")
-        .await
-        .unwrap()
-        .parse()
-        .unwrap();
-    let yuanbao = Yuanbao::new(config);
-    let receiver = yuanbao
-        .create_completion(
-            ChatCompletionRequest {
-                messages: ChatMessages(vec![ChatMessage {
-                    role: "user".to_string(),
-                    content: "x+1=2, x=?".to_string(),
-                }]),
-                chat_model: ChatModel::DeepSeekR1,
-            },
-            CancellationToken::new(),
-        )
-        .await
-        .unwrap();
-    let mut receiver = Box::pin(receiver);
-    while let Some(event) = receiver.next().await {
-        dbg!(event);
-    }
+    let app = Router::new()
+        .route("/models", get(Handler::models))
+        .route("/v1/chat/completions", post(Handler::chat_completions));
+    let listener = TcpListener::bind("0.0.0.0:7555").await.unwrap();
+    axum::serve(listener, app).await.unwrap();
+    
 }
