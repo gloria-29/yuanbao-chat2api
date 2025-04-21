@@ -52,12 +52,12 @@ pub struct Choice {
     pub index: u32,
     pub delta: ChatMessage,
 }
-struct MyStream {
-    receiver: Pin<Box<Receiver<ChatCompletionEvent>>>,
+struct MyStream<T> {
+    receiver: Pin<Box<Receiver<T>>>,
     cancel_token: CancellationToken,
 }
-impl Stream for MyStream {
-    type Item = ChatCompletionEvent;
+impl<T> Stream for MyStream<T> {
+    type Item = T;
 
     fn poll_next(
         mut self: Pin<&mut Self>,
@@ -69,7 +69,7 @@ impl Stream for MyStream {
         }
     }
 }
-impl Drop for MyStream {
+impl<T> Drop for MyStream<T> {
     fn drop(&mut self) {
         self.cancel_token.cancel();
     }
