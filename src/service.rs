@@ -3,6 +3,7 @@ use crate::yuanbao::{
     ChatMessages, ChatModel, Config, Yuanbao,
 };
 use anyhow::Context;
+use async_channel::Receiver;
 use axum::http::StatusCode;
 use axum::response::Sse;
 use axum::response::sse::Event;
@@ -11,7 +12,9 @@ use futures::Stream;
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
+use std::pin::Pin;
 use std::sync::LazyLock;
+use std::task::Poll;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -49,6 +52,28 @@ pub struct Choice {
     pub index: u32,
     pub delta: ChatMessage,
 }
+struct MyStream {
+    receiver: Pin<Box<Receiver<ChatCompletionEvent>>>,
+    cancel_token: CancellationToken,
+}
+impl Stream for MyStream {
+    type Item = ChatCompletionEvent;
+
+    fn poll_next(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Option<Self::Item>> {
+        match self.receiver.as_mut().poll_next(cx) {
+            Poll::Ready(res) => Poll::Ready(res),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+impl Drop for MyStream {
+    fn drop(&mut self) {
+        self.cancel_token.cancel();
+    }
+}
 
 pub struct Service {}
 impl Service {
@@ -83,13 +108,14 @@ impl Service {
             .context("cannot parse config.yaml")?;
         let yuanbao = Yuanbao::new(config);
         let model = req.model.parse()?;
+        let cancel_token = CancellationToken::new();
         let receiver = yuanbao
             .create_completion(
                 ChatCompletionRequest {
                     messages: req.messages,
                     chat_model: model,
                 },
-                CancellationToken::new(),// TODO cancel 
+                cancel_token.clone(),
                 // https://users.rust-lang.org/t/disconnected-state-on-warps-sse/112716
                 // https://github.com/tokio-rs/axum/discussions/1914
             )
@@ -98,52 +124,58 @@ impl Service {
         let receiver = Box::pin(receiver);
         let uuid = Uuid::new_v4().to_string();
         let time = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as i64;
-        Ok(Sse::new(receiver.map(move |event| {
-            let mut message = ChatMessage {
-                content: None,
-                role: "assistant".to_string(),
-                reasoning_content: None,
-            };
-            let mut finish_reason = None;
-            match event {
-                ChatCompletionEvent::Message(msg) => match msg.r#type {
-                    ChatCompletionMessageType::Think => {
-                        message = ChatMessage {
-                            role: "assistant".to_string(),
-                            content: None,
-                            reasoning_content: Some(msg.text),
-                        }
-                    }
-                    ChatCompletionMessageType::Msg => {
-                        message = ChatMessage {
-                            role: "assistant".to_string(),
-                            content: Some(msg.text),
-                            reasoning_content: None,
-                        }
-                    }
-                },
-                ChatCompletionEvent::Error(err) => {
-                    finish_reason = Some(format!("{:#}", err));
-                }
-                ChatCompletionEvent::Finish(f) => {
-                    finish_reason = Some(f);
-                }
+        Ok(Sse::new(
+            MyStream {
+                receiver,
+                cancel_token: cancel_token.clone(),
             }
-            Ok(Event::default().data(
-                serde_json::to_string(&AxumChatCompletionResponse {
-                    id: uuid.to_string(),
-                    choices: vec![Choice {
-                        finish_reason,
-                        index: 0,
-                        delta: message,
-                    }],
-                    created: time,
-                    model: model.to_common_string(),
-                    object_type: "chat.completion.chunk".to_string(),
-                })
-                .unwrap(),
-            ))
-        })))
+            .map(move |event| {
+                let mut message = ChatMessage {
+                    content: None,
+                    role: "assistant".to_string(),
+                    reasoning_content: None,
+                };
+                let mut finish_reason = None;
+                match event {
+                    ChatCompletionEvent::Message(msg) => match msg.r#type {
+                        ChatCompletionMessageType::Think => {
+                            message = ChatMessage {
+                                role: "assistant".to_string(),
+                                content: None,
+                                reasoning_content: Some(msg.text),
+                            }
+                        }
+                        ChatCompletionMessageType::Msg => {
+                            message = ChatMessage {
+                                role: "assistant".to_string(),
+                                content: Some(msg.text),
+                                reasoning_content: None,
+                            }
+                        }
+                    },
+                    ChatCompletionEvent::Error(err) => {
+                        finish_reason = Some(format!("{:#}", err));
+                    }
+                    ChatCompletionEvent::Finish(f) => {
+                        finish_reason = Some(f);
+                    }
+                }
+                Ok(Event::default().data(
+                    serde_json::to_string(&AxumChatCompletionResponse {
+                        id: uuid.to_string(),
+                        choices: vec![Choice {
+                            finish_reason,
+                            index: 0,
+                            delta: message,
+                        }],
+                        created: time,
+                        model: model.to_common_string(),
+                        object_type: "chat.completion.chunk".to_string(),
+                    })
+                    .unwrap(),
+                ))
+            }),
+        ))
     }
 }
 static SERVICE: LazyLock<Service> = LazyLock::new(|| Service::new());
