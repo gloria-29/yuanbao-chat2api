@@ -89,7 +89,9 @@ impl Service {
                     messages: req.messages,
                     chat_model: model,
                 },
-                CancellationToken::new(),
+                CancellationToken::new(),// TODO cancel 
+                // https://users.rust-lang.org/t/disconnected-state-on-warps-sse/112716
+                // https://github.com/tokio-rs/axum/discussions/1914
             )
             .await
             .context("cannot create completion")?;
