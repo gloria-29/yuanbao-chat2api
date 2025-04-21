@@ -63,7 +63,7 @@ impl Stream for MyStream {
         mut self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> Poll<Option<Self::Item>> {
-        match self.receiver.as_mut().poll_next(cx) {
+        match self.receiver.poll_next_unpin(cx) {
             Poll::Ready(res) => Poll::Ready(res),
             Poll::Pending => Poll::Pending,
         }
