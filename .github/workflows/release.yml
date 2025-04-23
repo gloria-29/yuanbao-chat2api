@@ -132,35 +132,42 @@ jobs:
       # Step 2.6: Prepare Asset Info (using job-level $BINARY_NAME)
       - name: Prepare Release Asset Info
         id: prepare_asset
+        # --- Pass matrix.binary_ext into the shell environment ---
+        env:
+          MATRIX_BINARY_EXT: ${{ matrix.binary_ext }}
         run: |
-          echo "Job level BINARY_NAME: $BINARY_NAME" # Debugging: Check if variable is set
-
+          echo "Job level BINARY_NAME: $BINARY_NAME"
+          echo "Step level MATRIX_BINARY_EXT: $MATRIX_BINARY_EXT" # Debugging
           TAG_NAME="${{ needs.create_release.outputs.tag_name }}"
-          # --- Use $BINARY_NAME (shell variable) instead of ${{ env.BINARY_NAME }} ---
-          BIN_NAME="${BINARY_NAME}${matrix.binary_ext || ''}"
-          ASSET_PATH="./target/${{ matrix.target }}/release/${BIN_NAME}"
-          ASSET_NAME="${BINARY_NAME}-${TAG_NAME}-${{ matrix.name_suffix }}${{ matrix.binary_ext || '' }}"
-
-          # --- Ensure BIN_NAME is not empty before proceeding ---
+          # --- Use the step-level env var for the extension ---
+          BIN_NAME="${BINARY_NAME}${MATRIX_BINARY_EXT}"
+          # --- Also use the step-level env var here ---
+          ASSET_NAME="${BINARY_NAME}-${TAG_NAME}-${{ matrix.name_suffix }}${MATRIX_BINARY_EXT}"
+          # Check if BINARY_NAME itself is empty (belt-and-suspenders check)
+          if [ -z "$BINARY_NAME" ]; then
+            echo "Error: Job-level BINARY_NAME variable is unexpectedly empty!"
+            exit 1
+          fi
+          # Check if BIN_NAME ended up empty
           if [ -z "$BIN_NAME" ]; then
-            echo "Error: BIN_NAME variable is empty!"
+            echo "Error: Calculated BIN_NAME variable is empty!"
             exit 1
           fi
-          # --- Ensure ASSET_PATH is not empty ---
-          if [ -z "$ASSET_PATH" ]; then
-            echo "Error: ASSET_PATH variable is empty!"
-            exit 1
+           # Check if ASSET_PATH construction would be empty (derived from BIN_NAME)
+          if [ -z "./target/${{ matrix.target }}/release/${BIN_NAME}" ]; then
+             echo "Error: Calculated ASSET_PATH would be empty!"
+             exit 1
           fi
-
+          # Construct ASSET_PATH *after* validating BIN_NAME
+          ASSET_PATH="./target/${{ matrix.target }}/release/${BIN_NAME}"
           echo "TAG_NAME=${TAG_NAME}" >> $GITHUB_OUTPUT
           echo "ASSET_PATH=${ASSET_PATH}" >> $GITHUB_OUTPUT
           echo "ASSET_NAME=${ASSET_NAME}" >> $GITHUB_OUTPUT
           echo "--- Preparing Asset ---"
           echo "Tag: ${TAG_NAME}"
-          echo "Binary Name: ${BIN_NAME}" # Added for clarity
+          echo "Binary Name: ${BIN_NAME}"
           echo "Binary Path: ${ASSET_PATH}"
           echo "Asset Name: ${ASSET_NAME}"
-
           # Verify the constructed binary path exists
           if [ ! -f "${ASSET_PATH}" ]; then
              echo "Error: Binary not found at calculated path: ${ASSET_PATH}"
@@ -168,7 +175,7 @@ jobs:
              ls -lha ./target/${{ matrix.target }}/release/
              exit 1
           fi
-        shell: bash # Use bash for consistency
+        shell: bash # Explicitly use bash for consistency
 
       # Step 2.7: Upload the compiled binary to the release
       - name: Upload Release Asset (${{ matrix.name_suffix }})
