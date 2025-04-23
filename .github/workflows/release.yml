@@ -61,6 +61,7 @@ jobs:
             name_suffix: linux-aarch64
             cross_compile_setup: |
               # Add foreign architecture and update
+              sudo apt-get update -y
               sudo dpkg --add-architecture arm64
               sudo apt-get update -y
               # Install cross-compiler AND the target's libssl-dev
