@@ -4,6 +4,7 @@ use crate::yuanbao::{
 };
 use anyhow::{Context, bail};
 use async_channel::Receiver;
+use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Sse;
 use axum::response::sse::Event;
@@ -75,6 +76,7 @@ impl<T> Drop for MyStream<T> {
     }
 }
 
+#[derive(Clone)]
 pub struct Service {}
 impl Service {
     pub fn new() -> Service {
@@ -101,7 +103,7 @@ impl Service {
         &self,
         key: String,
         req: AxumChatCompletionRequest,
-    ) -> anyhow::Result<Sse<impl Stream<Item = Result<Event, Infallible>>>> {
+    ) -> anyhow::Result<Sse<impl Stream<Item = Result<Event, Infallible>> + use<>>> {
         let config: Config = tokio::fs::read_to_string("config.yml")
             .await
             .context("cannot get config.yaml")?
@@ -182,15 +184,15 @@ impl Service {
         ))
     }
 }
-static SERVICE: LazyLock<Service> = LazyLock::new(|| Service::new());
 pub struct Handler {}
 impl Handler {
-    #[debug_handler]
-    pub async fn models() -> Json<ModelList> {
-        SERVICE.models().await
+    // #[debug_handler]
+    pub async fn models(service: State<Service>) -> Json<ModelList> {
+        service.models().await
     }
     // #[debug_handler]
     pub async fn chat_completions(
+        service: State<Service>,
         header_map: HeaderMap,
         Json(req): Json<AxumChatCompletionRequest>,
     ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, (StatusCode, String)> {
@@ -199,7 +201,7 @@ impl Handler {
             .map(|x| x.to_str().unwrap_or(""))
             .unwrap_or("");
         key = key.strip_prefix("Bearer ").unwrap_or(key);
-        match SERVICE.chat_completions(key.to_string(), req).await {
+        match service.chat_completions(key.to_string(), req).await {
             Ok(sse) => Ok(sse),
             Err(err) => Err((StatusCode::BAD_REQUEST, format!("{:#}", err))),
         }

@@ -1,8 +1,9 @@
 mod service;
 mod yuanbao;
 
-use crate::service::Handler;
+use crate::service::{Handler, Service};
 use axum::Router;
+use axum::extract::State;
 use axum::routing::{get, post};
 use futures::stream::StreamExt;
 use tokio::net::TcpListener;
@@ -25,9 +26,11 @@ async fn main() {
                 })),
         )
         .init();
+    let service = Service::new();
     let app = Router::new()
         .route("/v1/models", get(Handler::models))
-        .route("/v1/chat/completions", post(Handler::chat_completions));
+        .route("/v1/chat/completions", post(Handler::chat_completions))
+        .with_state(service);
     let listener = TcpListener::bind("0.0.0.0:7555").await.unwrap();
     info!("Launched the service on :7555");
     axum::serve(listener, app).await.unwrap();
