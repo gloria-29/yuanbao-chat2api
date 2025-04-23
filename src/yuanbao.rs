@@ -136,6 +136,8 @@ impl Yuanbao {
             .send()
             .await
             .context("cannot send request")?
+            .error_for_status()
+            .context("error status code")?
             .json()
             .await
             .context("cannot parse json")?;
@@ -148,7 +150,10 @@ impl Yuanbao {
         cancel_token: CancellationToken,
     ) -> anyhow::Result<Receiver<ChatCompletionEvent>> {
         info!("Creating conversation");
-        let conversation_id = self.create_conversation().await?;
+        let conversation_id = self
+            .create_conversation()
+            .await
+            .context("cannot create conversation")?;
         info!("Conversation id: {}", conversation_id);
         let prompt = request.messages.to_string();
         let body = json!(
