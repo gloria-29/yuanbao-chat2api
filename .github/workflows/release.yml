@@ -44,31 +44,28 @@ jobs:
           prerelease: false # Set to true if your tag indicates a pre-release
 
   # Job 2: Build binaries for multiple targets using a matrix strategy
-  # This job depends on 'create_release' completing successfully
   build_binaries:
     name: Build for ${{ matrix.os }} (${{ matrix.target }})
     needs: create_release
     strategy:
       matrix:
         include:
+          # ... (keep your existing matrix definitions) ...
           # Linux x86_64 (GNU)
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             name_suffix: linux-x86_64
-          # Linux ARM64 (GNU) - Cross-compiled on x86_64 runner
+          # Linux ARM64 (GNU)
 #          - os: ubuntu-latest
 #            target: aarch64-unknown-linux-gnu
 #            name_suffix: linux-aarch64
 #            cross_compile_setup: |
-#              # Add foreign architecture and update
-#              sudo apt-get update -y
 #              sudo dpkg --add-architecture arm64
 #              sudo apt-get update -y
-#              # Install cross-compiler AND the target's libssl-dev
 #              sudo apt-get install -y --no-install-recommends \
 #                gcc-aarch64-linux-gnu \
 #                libc6-dev-arm64-cross \
-#                libssl-dev:arm64  # <--- ADDED THIS LINE
+#                libssl-dev:arm64
 #            linker_env: CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
           # Windows x86_64 (MSVC)
           - os: windows-latest
@@ -76,33 +73,41 @@ jobs:
             name_suffix: windows-x86_64
             binary_ext: .exe
           # macOS x86_64 (Intel)
-          - os: macos-latest # Use macos-13 for intel, macos-14 is arm only now # Correction: macos-latest should handle both via Rosetta or native
+          - os: macos-latest # GitHub Actions runner handles architecture
             target: x86_64-apple-darwin
             name_suffix: apple-x86_64
           # macOS ARM64 (Apple Silicon)
-          - os: macos-latest # macos-14 runs on arm64
+          - os: macos-latest # GitHub Actions runner handles architecture
             target: aarch64-apple-darwin
             name_suffix: apple-arm64
-    # Use the OS specified in the matrix
+
     runs-on: ${{ matrix.os }}
+    # --- Define BINARY_NAME at the job level ---
+    env:
+      BINARY_NAME: yuanbao-chat2api
+
     steps:
       # Step 2.1: Checkout code
       - name: Checkout code
         uses: actions/checkout@v4
+
       # Step 2.2: Set up Rust toolchain
       - name: Set up Rust toolchain (stable)
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
           targets: ${{ matrix.target }}
+
       # Step 2.3: Install cross-compilation tools (if needed)
       - name: Install cross-compilation tools (if necessary)
         if: matrix.cross_compile_setup != ''
         run: ${{ matrix.cross_compile_setup }}
         shell: bash
+
       # Step 2.4: Cache Cargo dependencies
       - name: Cache Cargo registry and index
         uses: actions/cache@v4
+        # ... (cache config remains the same) ...
         with:
           path: |
             ~/.cargo/bin/
@@ -114,37 +119,57 @@ jobs:
           restore-keys: |
             ${{ matrix.os }}-cargo-${{ matrix.target }}-
             ${{ matrix.os }}-cargo-
+
       # Step 2.5: Build the project for the specific target
       - name: Build release binary (${{ matrix.target }})
+        # Use linker_env if defined, run cargo build
         run: ${{ matrix.linker_env }} cargo build --verbose --release --target ${{ matrix.target }}
         shell: bash
-        env:
-          BINARY_NAME: yuanbao-chat2api
-          # Sometimes pkg-config needs help finding cross-compiled libraries
-          # Add these environment variables for the aarch64 build
-          PKG_CONFIG_ALLOW_CROSS: 1 # Explicitly allow cross-compilation for pkg-config
-          # PKG_CONFIG_PATH: /usr/lib/aarch64-linux-gnu/pkgconfig # Usually not needed if libssl-dev:arm64 is installed correctly
-      # Step 2.6: Prepare Asset Info
+        env: # Specific env vars for this step
+          # Still need PKG_CONFIG for aarch64 linux cross-compile
+          PKG_CONFIG_ALLOW_CROSS: 1
+
+      # Step 2.6: Prepare Asset Info (using job-level $BINARY_NAME)
       - name: Prepare Release Asset Info
         id: prepare_asset
         run: |
+          echo "Job level BINARY_NAME: $BINARY_NAME" # Debugging: Check if variable is set
+
           TAG_NAME="${{ needs.create_release.outputs.tag_name }}"
-          BIN_NAME="${{ env.BINARY_NAME }}${{ matrix.binary_ext || '' }}"
+          # --- Use $BINARY_NAME (shell variable) instead of ${{ env.BINARY_NAME }} ---
+          BIN_NAME="${BINARY_NAME}${matrix.binary_ext || ''}"
           ASSET_PATH="./target/${{ matrix.target }}/release/${BIN_NAME}"
-          ASSET_NAME="${{ env.BINARY_NAME }}-${TAG_NAME}-${{ matrix.name_suffix }}${{ matrix.binary_ext || '' }}"
+          ASSET_NAME="${BINARY_NAME}-${TAG_NAME}-${{ matrix.name_suffix }}${{ matrix.binary_ext || '' }}"
+
+          # --- Ensure BIN_NAME is not empty before proceeding ---
+          if [ -z "$BIN_NAME" ]; then
+            echo "Error: BIN_NAME variable is empty!"
+            exit 1
+          fi
+          # --- Ensure ASSET_PATH is not empty ---
+          if [ -z "$ASSET_PATH" ]; then
+            echo "Error: ASSET_PATH variable is empty!"
+            exit 1
+          fi
+
           echo "TAG_NAME=${TAG_NAME}" >> $GITHUB_OUTPUT
           echo "ASSET_PATH=${ASSET_PATH}" >> $GITHUB_OUTPUT
           echo "ASSET_NAME=${ASSET_NAME}" >> $GITHUB_OUTPUT
           echo "--- Preparing Asset ---"
           echo "Tag: ${TAG_NAME}"
+          echo "Binary Name: ${BIN_NAME}" # Added for clarity
           echo "Binary Path: ${ASSET_PATH}"
           echo "Asset Name: ${ASSET_NAME}"
+
+          # Verify the constructed binary path exists
           if [ ! -f "${ASSET_PATH}" ]; then
-             echo "Error: Binary not found at ${ASSET_PATH}"
+             echo "Error: Binary not found at calculated path: ${ASSET_PATH}"
+             echo "Listing directory contents: ./target/${{ matrix.target }}/release/"
              ls -lha ./target/${{ matrix.target }}/release/
              exit 1
           fi
-        shell: bash
+        shell: bash # Use bash for consistency
+
       # Step 2.7: Upload the compiled binary to the release
       - name: Upload Release Asset (${{ matrix.name_suffix }})
         uses: actions/upload-release-asset@v1
@@ -155,3 +180,4 @@ jobs:
           asset_path: ${{ steps.prepare_asset.outputs.ASSET_PATH }}
           asset_name: ${{ steps.prepare_asset.outputs.ASSET_NAME }}
           asset_content_type: application/octet-stream
+
