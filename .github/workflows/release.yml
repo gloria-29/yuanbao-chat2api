@@ -1,0 +1,167 @@
+# Name of the workflow
+name: Release Binaries (Multi-Target)
+
+# Trigger the workflow ONLY on pushes to tags matching the pattern 'v*'
+on:
+  push:
+    tags:
+      - 'v*'
+
+# Permissions needed by the workflow
+permissions:
+  contents: write # Required to create releases and upload assets
+
+# Define the jobs to run
+jobs:
+  # Job 1: Create the GitHub Release placeholder
+  # This runs first and provides the upload URL for the build jobs
+  create_release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    outputs:
+      # Output the upload URL to be used by the build jobs
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+      tag_name: ${{ steps.get_tag.outputs.TAG_NAME }}
+    steps:
+      # Step 1.1: Get the tag name from the Git ref
+      - name: Get Tag Name
+        id: get_tag
+        run: echo "TAG_NAME=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      # Step 1.2: Create the actual release on GitHub
+      - name: Create GitHub Release
+        id: create_release
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.get_tag.outputs.TAG_NAME }}
+          name: Release ${{ steps.get_tag.outputs.TAG_NAME }}
+          body: |
+            Automated multi-target release for tag ${{ steps.get_tag.outputs.TAG_NAME }}.
+            Binaries attached below.
+          draft: false
+          prerelease: false # Set to true if your tag indicates a pre-release
+
+  # Job 2: Build binaries for multiple targets using a matrix strategy
+  # This job depends on 'create_release' completing successfully
+  build_binaries:
+    name: Build for ${{ matrix.os }} (${{ matrix.target }})
+    # This job needs the upload_url from the 'create_release' job
+    needs: create_release
+    # Define the build matrix
+    strategy:
+      matrix:
+        include:
+          # Linux x86_64 (GNU)
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            name_suffix: linux-x86_64
+          # Linux ARM64 (GNU) - Cross-compiled on x86_64 runner
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            name_suffix: linux-aarch64
+            cross_compile_setup: |
+              sudo apt-get update -y
+              sudo apt-get install -y gcc-aarch64-linux-gnu
+            linker_env: CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
+          # Windows x86_64 (MSVC)
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            name_suffix: windows-x86_64
+            binary_ext: .exe # Windows binaries have .exe extension
+          # macOS x86_64 (Intel)
+          - os: macos-latest # Use macos-13 for intel, macos-14 is arm only now
+            target: x86_64-apple-darwin
+            name_suffix: apple-x86_64
+          # macOS ARM64 (Apple Silicon)
+          - os: macos-latest # macos-14 runs on arm64
+            target: aarch64-apple-darwin
+            name_suffix: apple-arm64
+
+    # Use the OS specified in the matrix
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      # Step 2.1: Check out the repository code
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Step 2.2: Set up the Rust toolchain
+      - name: Set up Rust toolchain (stable)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          # Add the specific target for this matrix job
+          targets: ${{ matrix.target }}
+
+      # Step 2.3: Install cross-compilation tools (if needed, based on matrix)
+      - name: Install cross-compilation tools (if necessary)
+        if: matrix.cross_compile_setup != '' # Run only if cross_compile_setup is defined
+        run: ${{ matrix.cross_compile_setup }}
+        shell: bash
+
+      # Step 2.4: Cache Cargo dependencies
+      - name: Cache Cargo registry and index
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/ # Cache the target directory
+          # Key includes OS, target, and lock file hash for uniqueness
+          key: ${{ matrix.os }}-cargo-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ matrix.os }}-cargo-${{ matrix.target }}-
+            ${{ matrix.os }}-cargo-
+
+      # Step 2.5: Build the project for the specific target
+      - name: Build release binary (${{ matrix.target }})
+        # Set linker env var if defined in matrix (for cross-compiling)
+        run: ${{ matrix.linker_env }} cargo build --verbose --release --target ${{ matrix.target }}
+        shell: bash
+        env:
+          # Get the package name from Cargo.toml (adjust if your binary name differs)
+          # This assumes your binary name is the same as the package name.
+          # If not, set it explicitly, e.g., BINARY_NAME: your_binary
+          BINARY_NAME: yuanbao-chat2api
+
+      # Step 2.6: Prepare Asset Info (handle .exe for Windows)
+      - name: Prepare Release Asset Info
+        id: prepare_asset
+        run: |
+          # Get the tag from the 'needs' context
+          TAG_NAME="${{ needs.create_release.outputs.tag_name }}"
+          # Determine binary path and name based on OS and target
+          BIN_NAME="${{ env.BINARY_NAME }}${{ matrix.binary_ext || '' }}" # Add .exe if defined in matrix
+          ASSET_PATH="./target/${{ matrix.target }}/release/${BIN_NAME}"
+          ASSET_NAME="${{ env.BINARY_NAME }}-${TAG_NAME}-${{ matrix.name_suffix }}${{ matrix.binary_ext || '' }}"
+
+          echo "TAG_NAME=${TAG_NAME}" >> $GITHUB_OUTPUT
+          echo "ASSET_PATH=${ASSET_PATH}" >> $GITHUB_OUTPUT
+          echo "ASSET_NAME=${ASSET_NAME}" >> $GITHUB_OUTPUT
+          echo "--- Preparing Asset ---"
+          echo "Tag: ${TAG_NAME}"
+          echo "Binary Path: ${ASSET_PATH}"
+          echo "Asset Name: ${ASSET_NAME}"
+          # Verify the binary exists before proceeding
+          if [ ! -f "${ASSET_PATH}" ]; then
+             echo "Error: Binary not found at ${ASSET_PATH}"
+             ls -lha ./target/${{ matrix.target }}/release/ # List directory contents for debugging
+             exit 1
+          fi
+        shell: bash # Use bash for consistent scripting across OSes
+
+      # Step 2.7: Upload the compiled binary to the release
+      - name: Upload Release Asset (${{ matrix.name_suffix }})
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # Get the upload URL from the 'create_release' job output
+          upload_url: ${{ needs.create_release.outputs.upload_url }}
+          asset_path: ${{ steps.prepare_asset.outputs.ASSET_PATH }}
+          asset_name: ${{ steps.prepare_asset.outputs.ASSET_NAME }}
+          asset_content_type: application/octet-stream # Generic binary type
