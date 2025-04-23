@@ -1,6 +1,6 @@
 use crate::yuanbao::{
     ChatCompletionEvent, ChatCompletionMessageType, ChatCompletionRequest, ChatMessage,
-    ChatMessages, ChatModel, Config, Yuanbao,
+    ChatMessages, ChatModel, Yuanbao,
 };
 use anyhow::{Context, bail};
 use async_channel::Receiver;
@@ -14,12 +14,28 @@ use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
 use std::pin::Pin;
+use std::str::FromStr;
 use std::sync::LazyLock;
 use std::task::Poll;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+#[derive(Debug, Deserialize, Clone)]
+pub struct Config {
+    pub port: u16,
+    pub key: String,
+    pub agent_id: String,
+    pub hy_user: String,
+    pub hy_token: String,
+}
+impl FromStr for Config {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(serde_yaml::from_str(s)?)
+    }
+}
 #[derive(Serialize)]
 pub struct ModelList {
     pub object: String,
@@ -77,10 +93,16 @@ impl<T> Drop for MyStream<T> {
 }
 
 #[derive(Clone)]
-pub struct Service {}
+pub struct Service {
+    config: Config,
+    yuanbao: Yuanbao,
+}
 impl Service {
-    pub fn new() -> Service {
-        Service {}
+    pub fn new(config: Config) -> Service {
+        Service {
+            config: config.clone(),
+            yuanbao: Yuanbao::new(config.clone()),
+        }
     }
     pub async fn models(&self) -> Json<ModelList> {
         Json::from(ModelList {
@@ -104,18 +126,12 @@ impl Service {
         key: String,
         req: AxumChatCompletionRequest,
     ) -> anyhow::Result<Sse<impl Stream<Item = Result<Event, Infallible>> + use<>>> {
-        let config: Config = tokio::fs::read_to_string("config.yml")
-            .await
-            .context("cannot get config.yaml")?
-            .parse()
-            .context("cannot parse config.yaml")?;
-        let yuanbao = Yuanbao::new(config.clone());
-        if key != config.key {
+        if key != self.config.key {
             bail!("Key is invalid");
         }
         let model = req.model.parse()?;
         let cancel_token = CancellationToken::new();
-        let receiver = yuanbao
+        let receiver = self.yuanbao
             .create_completion(
                 ChatCompletionRequest {
                     messages: req.messages,

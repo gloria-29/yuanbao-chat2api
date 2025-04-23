@@ -1,4 +1,5 @@
-key: xxx（自定义一个）
-agent_id: xxx（在Header的X-AgentID里）
-hy_user: xxx（在Cookie里）
-hy_token: xxx（在Cookie里）
+key: xxx # 自定义一个
+agent_id: xxx # 在Header的X-AgentID里
+hy_user: xxx # 在Cookie里
+hy_token: xxx # 在Cookie里
+port: 7555 # 监听端口，若没有冲突可以不修改

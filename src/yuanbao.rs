@@ -1,3 +1,4 @@
+use crate::service::Config;
 use anyhow::{Context, Error, anyhow, bail};
 use async_channel::{Receiver, Sender, unbounded};
 use axum::http::HeaderValue;
@@ -102,20 +103,7 @@ impl ChatModel {
     }
 }
 
-#[derive(Debug, Deserialize, Clone)]
-pub struct Config {
-    pub key: String,
-    pub agent_id: String,
-    pub hy_user: String,
-    pub hy_token: String,
-}
-impl FromStr for Config {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(serde_yaml::from_str(s)?)
-    }
-}
+#[derive(Clone)]
 pub struct Yuanbao {
     config: Config,
     client: Client,
