@@ -26,7 +26,7 @@ async fn main() {
         )
         .init();
     let app = Router::new()
-        .route("/models", get(Handler::models))
+        .route("/v1/models", get(Handler::models))
         .route("/v1/chat/completions", post(Handler::chat_completions));
     let listener = TcpListener::bind("0.0.0.0:7555").await.unwrap();
     info!("Launched the service on :7555");
