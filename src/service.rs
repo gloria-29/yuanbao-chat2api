@@ -2,9 +2,9 @@ use crate::yuanbao::{
     ChatCompletionEvent, ChatCompletionMessageType, ChatCompletionRequest, ChatMessage,
     ChatMessages, ChatModel, Config, Yuanbao,
 };
-use anyhow::Context;
+use anyhow::{Context, bail};
 use async_channel::Receiver;
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::Sse;
 use axum::response::sse::Event;
 use axum::{Json, debug_handler};
@@ -99,6 +99,7 @@ impl Service {
     }
     pub async fn chat_completions(
         &self,
+        key: String,
         req: AxumChatCompletionRequest,
     ) -> anyhow::Result<Sse<impl Stream<Item = Result<Event, Infallible>>>> {
         let config: Config = tokio::fs::read_to_string("config.yml")
@@ -106,7 +107,10 @@ impl Service {
             .context("cannot get config.yaml")?
             .parse()
             .context("cannot parse config.yaml")?;
-        let yuanbao = Yuanbao::new(config);
+        let yuanbao = Yuanbao::new(config.clone());
+        if key != config.key {
+            bail!("Key is invalid");
+        }
         let model = req.model.parse()?;
         let cancel_token = CancellationToken::new();
         let receiver = yuanbao
@@ -187,9 +191,15 @@ impl Handler {
     }
     // #[debug_handler]
     pub async fn chat_completions(
+        header_map: HeaderMap,
         Json(req): Json<AxumChatCompletionRequest>,
     ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, (StatusCode, String)> {
-        match SERVICE.chat_completions(req).await {
+        let mut key = header_map
+            .get("Authorization")
+            .map(|x| x.to_str().unwrap_or(""))
+            .unwrap_or("");
+        key = key.strip_prefix("Bearer ").unwrap_or(key);
+        match SERVICE.chat_completions(key.to_string(), req).await {
             Ok(sse) => Ok(sse),
             Err(err) => Err((StatusCode::BAD_REQUEST, format!("{:#}", err))),
         }

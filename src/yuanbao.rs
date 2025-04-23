@@ -102,11 +102,12 @@ impl ChatModel {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct Config {
-    agent_id: String,
-    hy_user: String,
-    hy_token: String,
+    pub key: String,
+    pub agent_id: String,
+    pub hy_user: String,
+    pub hy_token: String,
 }
 impl FromStr for Config {
     type Err = anyhow::Error;
