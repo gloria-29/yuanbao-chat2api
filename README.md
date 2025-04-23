@@ -1,6 +1,6 @@
 # yuanbao-chat2api
 
-腾讯元宝Chat2API。
+腾讯元宝逆向Chat2API。
 
 ## 免责声明
 
@@ -26,10 +26,10 @@ cargo build --release
 
 ![image-20250423105807954](https://public.ptree.top/picgo/2025/04/1745377090.png)
 
-![image-20250423105826414](https://public.ptree.top/picgo/2025/04/1745377107.png)
+![image-20250423162956019](https://public.ptree.top/picgo/2025/04/1745396996.png)
 
-API密钥是你自己在config里设的key。
+API密钥是你自己在配置文件里设的key。
 
 模型目前只支持DeepSeek R1和V3（注意大小写）。
 
-暂时没有实现非流传输，因此在Cherry Studio里面检查可用性会失败，但实际上是可以用的。
+暂时没有实现非流传输，因此在Cherry Studio里面使用“检查”按钮来检查可用性会失败，但实际上是可以用的。
