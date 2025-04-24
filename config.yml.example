@@ -1,5 +1,5 @@
 key: xxx # 自定义一个
-agent_id: xxx # 在Header的X-AgentID里
+agent_id: xxx # 在Header的X-AgentID里，如果你看到的X-AgentID是两段，即中间有「/」的，前面那段才是agent_id
 hy_user: xxx # 在Cookie里
 hy_token: xxx # 在Cookie里
 port: 7555 # 监听端口，若没有冲突可以不修改
