@@ -11,6 +11,8 @@ use axum::response::sse::Event;
 use axum::{Json, debug_handler};
 use futures::Stream;
 use futures_util::StreamExt;
+use pin_project::__private::PinnedDrop;
+use pin_project::{pin_project, pinned_drop};
 use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
 use std::pin::Pin;
@@ -69,25 +71,28 @@ pub struct Choice {
     pub index: u32,
     pub delta: ChatMessage,
 }
+#[pin_project(PinnedDrop)]
 struct MyStream<T> {
-    receiver: Pin<Box<Receiver<T>>>,
+    #[pin]
+    receiver: Receiver<T>,
     cancel_token: CancellationToken,
 }
 impl<T> Stream for MyStream<T> {
     type Item = T;
 
     fn poll_next(
-        mut self: Pin<&mut Self>,
+        self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> Poll<Option<Self::Item>> {
-        match self.receiver.poll_next_unpin(cx) {
+        match self.project().receiver.poll_next_unpin(cx) {
             Poll::Ready(res) => Poll::Ready(res),
             Poll::Pending => Poll::Pending,
         }
     }
 }
-impl<T> Drop for MyStream<T> {
-    fn drop(&mut self) {
+#[pinned_drop]
+impl<T> PinnedDrop for MyStream<T> {
+    fn drop(self: Pin<&mut Self>) {
         self.cancel_token.cancel();
     }
 }
@@ -131,7 +136,8 @@ impl Service {
         }
         let model = req.model.parse()?;
         let cancel_token = CancellationToken::new();
-        let receiver = self.yuanbao
+        let receiver = self
+            .yuanbao
             .create_completion(
                 ChatCompletionRequest {
                     messages: req.messages,
@@ -143,7 +149,7 @@ impl Service {
             )
             .await
             .context("cannot create completion")?;
-        let receiver = Box::pin(receiver);
+        // let receiver = Box::pin(receiver);
         let uuid = Uuid::new_v4().to_string();
         let time = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as i64;
         Ok(Sse::new(
