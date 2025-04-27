@@ -50,7 +50,7 @@ pub struct ChatMessage {
 impl Display for ChatMessages {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let arr = &self.0;
-        if arr.len() == 0 {
+        if arr.is_empty() {
             return Err(std::fmt::Error);
         }
         if arr.len() == 1 {
@@ -87,14 +87,14 @@ impl FromStr for ChatModel {
     }
 }
 impl ChatModel {
-    pub fn to_yuanbao_string(&self) -> String {
+    pub fn as_yuanbao_string(&self) -> String {
         match self {
             ChatModel::DeepSeekV3 => "deep_seek_v3",
             ChatModel::DeepSeekR1 => "deep_seek",
         }
         .to_string()
     }
-    pub fn to_common_string(&self) -> String {
+    pub fn as_common_string(&self) -> String {
         match self {
             ChatModel::DeepSeekV3 => "deepseek-v3",
             ChatModel::DeepSeekR1 => "deepseek-r1",
@@ -157,7 +157,7 @@ impl Yuanbao {
         "agentId": self.config.agent_id,
         "supportHint": 1,
         "version": "v2",
-        "chatModelId": request.chat_model.to_yuanbao_string(),
+        "chatModelId": request.chat_model.as_yuanbao_string(),
             }
         );
         let formatted_url = CHAT_URL.replace("{}", &conversation_id);
@@ -199,17 +199,14 @@ impl Yuanbao {
                         continue;
                     }
                     let res = serde_json::from_str::<serde_json::Value>(&message.data);
-                    let value;
-                    match res {
-                        Ok(v) => {
-                            value = v;
-                        }
+                    let value = match res {
+                        Ok(v) => v,
                         Err(_) => continue,
-                    }
+                    };
                     match value["type"].as_str().unwrap_or("") {
                         "think" => {
                             let content = value["content"].as_str().unwrap_or("");
-                            if content == "" {
+                            if content.is_empty() {
                                 continue;
                             }
                             let _ = sender
@@ -230,7 +227,7 @@ impl Yuanbao {
                         }
                         _ => {
                             let stop_reason = value["stopReason"].as_str().unwrap_or("");
-                            if stop_reason != "" {
+                            if !stop_reason.is_empty() {
                                 finish_reason = stop_reason.to_string();
                             }
                         }
@@ -258,42 +255,39 @@ impl Yuanbao {
             .await;
     }
     fn make_headers(config: &Config) -> HeaderMap {
-        HeaderMap::from_iter(
-            vec![
-                (
-                    HeaderName::from_str("Cookie").unwrap(),
-                    HeaderValue::from_str(&format!(
-                        "hy_source=web; hy_user={}; hy_token={}",
-                        config.hy_user, config.hy_token
-                    ))
-                    .unwrap(),
-                ),
-                (
-                    HeaderName::from_str("Origin").unwrap(),
-                    HeaderValue::from_str("https://yuanbao.tencent.com").unwrap(),
-                ),
-                (
-                    HeaderName::from_str("Referer").unwrap(),
-                    HeaderValue::from_str(&format!(
-                        "https://yuanbao.tencent.com/chat/{}",
-                        config.agent_id
-                    ))
-                    .unwrap(),
-                ),
-                (
-                    HeaderName::from_str("X-Agentid").unwrap(),
-                    HeaderValue::from_str(&config.agent_id).unwrap(),
-                ),
-                (
-                    HeaderName::from_str("User-Agent").unwrap(),
-                    HeaderValue::from_str(
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64)\
+        HeaderMap::from_iter(vec![
+            (
+                HeaderName::from_str("Cookie").unwrap(),
+                HeaderValue::from_str(&format!(
+                    "hy_source=web; hy_user={}; hy_token={}",
+                    config.hy_user, config.hy_token
+                ))
+                .unwrap(),
+            ),
+            (
+                HeaderName::from_str("Origin").unwrap(),
+                HeaderValue::from_str("https://yuanbao.tencent.com").unwrap(),
+            ),
+            (
+                HeaderName::from_str("Referer").unwrap(),
+                HeaderValue::from_str(&format!(
+                    "https://yuanbao.tencent.com/chat/{}",
+                    config.agent_id
+                ))
+                .unwrap(),
+            ),
+            (
+                HeaderName::from_str("X-Agentid").unwrap(),
+                HeaderValue::from_str(&config.agent_id).unwrap(),
+            ),
+            (
+                HeaderName::from_str("User-Agent").unwrap(),
+                HeaderValue::from_str(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64)\
                      AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
-                    )
-                    .unwrap(),
-                ),
-            ]
-            .into_iter(),
-        )
+                )
+                .unwrap(),
+            ),
+        ])
     }
 }

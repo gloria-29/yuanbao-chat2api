@@ -197,7 +197,7 @@ impl Service {
                             delta: message,
                         }],
                         created: time,
-                        model: model.to_common_string(),
+                        model: model.as_common_string(),
                         object_type: "chat.completion.chunk".to_string(),
                     })
                     .unwrap(),
