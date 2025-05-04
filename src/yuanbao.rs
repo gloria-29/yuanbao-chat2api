@@ -1,6 +1,7 @@
 use crate::service::Config;
 use anyhow::{Context, Error, anyhow, bail};
 use async_channel::{Receiver, Sender, unbounded};
+use async_stream::stream;
 use axum::http::HeaderValue;
 use futures_util::StreamExt;
 use reqwest::Client;
@@ -13,7 +14,7 @@ use std::str::FromStr;
 use std::time::Duration;
 use tokio::select;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, info};
+use tracing::{debug, error, info, warn};
 
 static CREATE_URL: &str = "https://yuanbao.tencent.com/api/user/agent/conversation/create";
 static CLEAR_URL: &str = "https://yuanbao.tencent.com/api/user/agent/conversation/v1/clear";
@@ -136,7 +137,6 @@ impl Yuanbao {
     pub async fn create_completion(
         &self,
         request: ChatCompletionRequest,
-        cancel_token: CancellationToken,
     ) -> anyhow::Result<Receiver<ChatCompletionEvent>> {
         info!("Creating conversation");
         let conversation_id = self
@@ -165,27 +165,23 @@ impl Yuanbao {
         let mut sse = EventSource::new(self.client.post(&formatted_url).json(&body))
             .context("failed to get next event")?;
         let (sender, receiver) = unbounded::<ChatCompletionEvent>();
-
         tokio::spawn(async move {
-            Self::process_sse(&mut sse, sender, cancel_token).await;
+            if let Err(err) = Self::process_sse(&mut sse, sender).await {
+                warn!("SSE exit: {:#}", err);
+            }
         });
         Ok(receiver)
     }
     async fn process_sse(
         sse: &mut EventSource,
         sender: Sender<ChatCompletionEvent>,
-        cancel_token: CancellationToken,
-    ) {
+    ) -> anyhow::Result<()> {
         let mut finish_reason = "stop".to_string();
         loop {
             let event;
             select! {
                 Some(e)=sse.next()=>{
                     event=e;
-                },
-                _=cancel_token.cancelled()=>{
-                    info!("Stream cancelled");
-                    break;
                 },
                 else => {
                     info!("Stream ended (pattern else)");
@@ -209,21 +205,21 @@ impl Yuanbao {
                             if content.is_empty() {
                                 continue;
                             }
-                            let _ = sender
+                            sender
                                 .send(ChatCompletionEvent::Message(ChatCompletionMessage {
                                     r#type: ChatCompletionMessageType::Think,
                                     text: content.to_string(),
                                 }))
-                                .await;
+                                .await?;
                         }
                         "text" => {
                             let msg = value["msg"].as_str().unwrap_or("");
-                            let _ = sender
+                            sender
                                 .send(ChatCompletionEvent::Message(ChatCompletionMessage {
                                     r#type: ChatCompletionMessageType::Msg,
                                     text: msg.to_string(),
                                 }))
-                                .await;
+                                .await?;
                         }
                         _ => {
                             let stop_reason = value["stopReason"].as_str().unwrap_or("");
@@ -236,23 +232,19 @@ impl Yuanbao {
                 }
                 Err(err) => match err {
                     reqwest_eventsource::Error::StreamEnded => {
-                        info!("Stream ended (error type)");
+                        info!("Stream ended");
                         break;
                     }
                     _ => {
-                        let _ = sender
-                            .send(ChatCompletionEvent::Error(anyhow!(
-                                "Error on stream: {}",
-                                err
-                            )))
-                            .await;
+                        return Err(anyhow!("stream error {}", err));
                     }
                 },
             }
         }
-        let _ = sender
+        sender
             .send(ChatCompletionEvent::Finish(finish_reason))
-            .await;
+            .await?;
+        Ok(())
     }
     fn make_headers(config: &Config) -> HeaderMap {
         HeaderMap::from_iter(vec![

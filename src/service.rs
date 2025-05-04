@@ -71,31 +71,6 @@ pub struct Choice {
     pub index: u32,
     pub delta: ChatMessage,
 }
-#[pin_project(PinnedDrop)]
-struct MyStream<T> {
-    #[pin]
-    receiver: Receiver<T>,
-    cancel_token: CancellationToken,
-}
-impl<T> Stream for MyStream<T> {
-    type Item = T;
-
-    fn poll_next(
-        self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> Poll<Option<Self::Item>> {
-        match self.project().receiver.poll_next_unpin(cx) {
-            Poll::Ready(res) => Poll::Ready(res),
-            Poll::Pending => Poll::Pending,
-        }
-    }
-}
-#[pinned_drop]
-impl<T> PinnedDrop for MyStream<T> {
-    fn drop(self: Pin<&mut Self>) {
-        self.cancel_token.cancel();
-    }
-}
 
 #[derive(Clone)]
 pub struct Service {
@@ -135,75 +110,62 @@ impl Service {
             bail!("Key is invalid");
         }
         let model = req.model.parse()?;
-        let cancel_token = CancellationToken::new();
         let receiver = self
             .yuanbao
-            .create_completion(
-                ChatCompletionRequest {
-                    messages: req.messages,
-                    chat_model: model,
-                },
-                cancel_token.clone(),
-                // https://users.rust-lang.org/t/disconnected-state-on-warps-sse/112716
-                // https://github.com/tokio-rs/axum/discussions/1914
-            )
+            .create_completion(ChatCompletionRequest {
+                messages: req.messages,
+                chat_model: model,
+            })
             .await
             .context("cannot create completion")?;
-        // let receiver = Box::pin(receiver);
         let uuid = Uuid::new_v4().to_string();
         let time = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as i64;
-        Ok(Sse::new(
-            MyStream {
-                receiver,
-                cancel_token: cancel_token.clone(),
-            }
-            .map(move |event| {
-                let mut message = ChatMessage {
-                    content: None,
-                    role: "assistant".to_string(),
-                    reasoning_content: None,
-                };
-                let mut finish_reason = None;
-                match event {
-                    ChatCompletionEvent::Message(msg) => match msg.r#type {
-                        ChatCompletionMessageType::Think => {
-                            message = ChatMessage {
-                                role: "assistant".to_string(),
-                                content: None,
-                                reasoning_content: Some(msg.text),
-                            }
+        Ok(Sse::new(receiver.map(move |event| {
+            let mut message = ChatMessage {
+                content: None,
+                role: "assistant".to_string(),
+                reasoning_content: None,
+            };
+            let mut finish_reason = None;
+            match event {
+                ChatCompletionEvent::Message(msg) => match msg.r#type {
+                    ChatCompletionMessageType::Think => {
+                        message = ChatMessage {
+                            role: "assistant".to_string(),
+                            content: None,
+                            reasoning_content: Some(msg.text),
                         }
-                        ChatCompletionMessageType::Msg => {
-                            message = ChatMessage {
-                                role: "assistant".to_string(),
-                                content: Some(msg.text),
-                                reasoning_content: None,
-                            }
+                    }
+                    ChatCompletionMessageType::Msg => {
+                        message = ChatMessage {
+                            role: "assistant".to_string(),
+                            content: Some(msg.text),
+                            reasoning_content: None,
                         }
-                    },
-                    ChatCompletionEvent::Error(err) => {
-                        finish_reason = Some(format!("{:#}", err));
                     }
-                    ChatCompletionEvent::Finish(f) => {
-                        finish_reason = Some(f);
-                    }
+                },
+                ChatCompletionEvent::Error(err) => {
+                    finish_reason = Some(format!("{:#}", err));
                 }
-                Ok(Event::default().data(
-                    serde_json::to_string(&AxumChatCompletionResponse {
-                        id: uuid.to_string(),
-                        choices: vec![Choice {
-                            finish_reason,
-                            index: 0,
-                            delta: message,
-                        }],
-                        created: time,
-                        model: model.as_common_string(),
-                        object_type: "chat.completion.chunk".to_string(),
-                    })
-                    .unwrap(),
-                ))
-            }),
-        ))
+                ChatCompletionEvent::Finish(f) => {
+                    finish_reason = Some(f);
+                }
+            }
+            Ok(Event::default().data(
+                serde_json::to_string(&AxumChatCompletionResponse {
+                    id: uuid.to_string(),
+                    choices: vec![Choice {
+                        finish_reason,
+                        index: 0,
+                        delta: message,
+                    }],
+                    created: time,
+                    model: model.as_common_string(),
+                    object_type: "chat.completion.chunk".to_string(),
+                })
+                .unwrap(),
+            ))
+        })))
     }
 }
 pub struct Handler {}
