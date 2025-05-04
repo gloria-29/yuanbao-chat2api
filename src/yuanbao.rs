@@ -1,7 +1,6 @@
 use crate::service::Config;
 use anyhow::{Context, Error, anyhow, bail};
 use async_channel::{Receiver, Sender, unbounded};
-use async_stream::stream;
 use axum::http::HeaderValue;
 use futures_util::StreamExt;
 use reqwest::Client;
