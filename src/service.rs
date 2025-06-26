@@ -1,26 +1,19 @@
 use crate::yuanbao::{
     ChatCompletionEvent, ChatCompletionMessageType, ChatCompletionRequest, ChatMessage,
-    ChatMessages, ChatModel, Yuanbao,
+    ChatMessages, Yuanbao,
 };
 use anyhow::{Context, bail};
-use async_channel::Receiver;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Sse;
 use axum::response::sse::Event;
-use axum::{Json, debug_handler};
+use axum::Json;
 use futures::Stream;
 use futures_util::StreamExt;
-use pin_project::__private::PinnedDrop;
-use pin_project::{pin_project, pinned_drop};
 use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
-use std::pin::Pin;
 use std::str::FromStr;
-use std::sync::LazyLock;
-use std::task::Poll;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 #[derive(Debug, Deserialize, Clone)]

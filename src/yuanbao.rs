@@ -10,10 +10,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::fmt::{Debug, Display, Formatter};
 use std::str::FromStr;
-use std::time::Duration;
 use tokio::select;
-use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 static CREATE_URL: &str = "https://yuanbao.tencent.com/api/user/agent/conversation/create";
 static CLEAR_URL: &str = "https://yuanbao.tencent.com/api/user/agent/conversation/v1/clear";
